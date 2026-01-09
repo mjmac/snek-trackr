@@ -367,6 +367,8 @@
         }
 
         const csv = await response.text();
+        if (!csv.trim()) return;
+
         const lines = csv.trim().split('\n');
 
         historyData.hot = [];
@@ -375,10 +377,10 @@
         for (const line of lines) {
           if (line.startsWith('#') || line.startsWith(',result')) continue;
           const cols = line.split(',');
-          if (cols.length < 7) continue;
+          if (cols.length < 10) continue;
 
           const value = parseFloat(cols[6]);
-          const side = cols[9];
+          const side = cols[9].trim();
 
           if (isNaN(value)) continue;
 
