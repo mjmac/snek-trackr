@@ -34,6 +34,8 @@ const char* govee_cool_mac = GOVEE_COOL_SIDE_MAC;
 #define VPIN_HOT_HUMIDITY V1
 #define VPIN_COOL_TEMP    V2
 #define VPIN_COOL_HUMIDITY V3
+#define VPIN_HOT_BATTERY  V4
+#define VPIN_COOL_BATTERY V5
 
 // How often to push data to Blynk (milliseconds)
 #define BLYNK_PUSH_INTERVAL_MS 60000  // 1 minute
@@ -49,12 +51,13 @@ const char* govee_cool_mac = GOVEE_COOL_SIDE_MAC;
 struct SensorData {
   float temperature;  // Celsius internally
   float humidity;     // Percentage
+  uint8_t battery;    // Percentage
   bool valid;
   unsigned long lastUpdate;
 };
 
-SensorData hotSide = {0, 0, false, 0};
-SensorData coolSide = {0, 0, false, 0};
+SensorData hotSide = {0, 0, 0, false, 0};
+SensorData coolSide = {0, 0, 0, false, 0};
 
 NimBLEScan* pBLEScan;
 unsigned long lastBlynkPush = 0;
@@ -64,8 +67,8 @@ bool initialPushDone = false;
 // GOVEE H5075 PACKET DECODING
 // =============================================================================
 
-bool decodeGoveeH5075(const uint8_t* data, size_t length, float* temp, float* humidity) {
-  if (length < 6) {
+bool decodeGoveeH5075(const uint8_t* data, size_t length, float* temp, float* humidity, uint8_t* battery) {
+  if (length < 7) {
     return false;
   }
 
@@ -86,8 +89,11 @@ bool decodeGoveeH5075(const uint8_t* data, size_t length, float* temp, float* hu
     *temp = -*temp;
   }
 
+  // Battery is at byte 6
+  *battery = data[6];
+
   // Sanity check
-  if (*temp < -40 || *temp > 60 || *humidity < 0 || *humidity > 100) {
+  if (*temp < -40 || *temp > 60 || *humidity < 0 || *humidity > 100 || *battery > 100) {
     return false;
   }
 
@@ -115,19 +121,22 @@ class GoveeAdvertisedDeviceCallbacks : public NimBLEAdvertisedDeviceCallbacks {
 
     std::string mfgData = advertisedDevice->getManufacturerData();
     float temp, humidity;
+    uint8_t battery;
 
-    if (decodeGoveeH5075((const uint8_t*)mfgData.data(), mfgData.length(), &temp, &humidity)) {
+    if (decodeGoveeH5075((const uint8_t*)mfgData.data(), mfgData.length(), &temp, &humidity, &battery)) {
       SensorData* sensor = isHotSide ? &hotSide : &coolSide;
       sensor->temperature = temp;
       sensor->humidity = humidity;
+      sensor->battery = battery;
       sensor->valid = true;
       sensor->lastUpdate = millis();
 
-      Serial.printf("[%s] Temp: %.1f°C (%.1f°F), Humidity: %.1f%%\n",
+      Serial.printf("[%s] Temp: %.1f°C (%.1f°F), Humidity: %.1f%%, Battery: %d%%\n",
                     isHotSide ? "HOT " : "COOL",
                     temp,
                     temp * 9.0 / 5.0 + 32.0,
-                    humidity);
+                    humidity,
+                    battery);
     }
   }
 };
@@ -154,15 +163,17 @@ void pushToBlynk() {
   if (hotSide.valid) {
     Blynk.virtualWrite(VPIN_HOT_TEMP, hotSide.temperature);
     Blynk.virtualWrite(VPIN_HOT_HUMIDITY, hotSide.humidity);
-    Serial.printf("Pushed hot side: %.1f°C, %.1f%%\n",
-                  hotSide.temperature, hotSide.humidity);
+    Blynk.virtualWrite(VPIN_HOT_BATTERY, hotSide.battery);
+    Serial.printf("Pushed hot side: %.1f°C, %.1f%%, %d%% battery\n",
+                  hotSide.temperature, hotSide.humidity, hotSide.battery);
   }
 
   if (coolSide.valid) {
     Blynk.virtualWrite(VPIN_COOL_TEMP, coolSide.temperature);
     Blynk.virtualWrite(VPIN_COOL_HUMIDITY, coolSide.humidity);
-    Serial.printf("Pushed cool side: %.1f°C, %.1f%%\n",
-                  coolSide.temperature, coolSide.humidity);
+    Blynk.virtualWrite(VPIN_COOL_BATTERY, coolSide.battery);
+    Serial.printf("Pushed cool side: %.1f°C, %.1f%%, %d%% battery\n",
+                  coolSide.temperature, coolSide.humidity, coolSide.battery);
   }
 }
 

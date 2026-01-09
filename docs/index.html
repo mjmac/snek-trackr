@@ -152,7 +152,7 @@
 
   <div class="cards">
     <div class="card hot">
-      <div class="card-title"><span class="dot"></span> Hot Side</div>
+      <div class="card-title"><span class="dot"></span> Hot Side <span class="battery" id="hot-battery-icon"></span></div>
       <div class="readings">
         <div class="reading">
           <div class="value" id="hot-temp">--</div>
@@ -162,11 +162,15 @@
           <div class="value" id="hot-humidity">--</div>
           <div class="unit">humidity</div>
         </div>
+        <div class="reading">
+          <div class="value" id="hot-battery">--</div>
+          <div class="unit">battery</div>
+        </div>
       </div>
     </div>
 
     <div class="card cool">
-      <div class="card-title"><span class="dot"></span> Cool Side</div>
+      <div class="card-title"><span class="dot"></span> Cool Side <span class="battery" id="cool-battery-icon"></span></div>
       <div class="readings">
         <div class="reading">
           <div class="value" id="cool-temp">--</div>
@@ -175,6 +179,10 @@
         <div class="reading">
           <div class="value" id="cool-humidity">--</div>
           <div class="unit">humidity</div>
+        </div>
+        <div class="reading">
+          <div class="value" id="cool-battery">--</div>
+          <div class="unit">battery</div>
         </div>
       </div>
     </div>
@@ -197,7 +205,7 @@
 
     // State
     let useFahrenheit = localStorage.getItem('useFahrenheit') === 'true';
-    let data = { hotTemp: null, hotHumidity: null, coolTemp: null, coolHumidity: null };
+    let data = { hotTemp: null, hotHumidity: null, hotBattery: null, coolTemp: null, coolHumidity: null, coolBattery: null };
 
     // Thresholds (in Celsius)
     const THRESHOLDS = {
@@ -205,7 +213,8 @@
       hotTempHigh: 33,  // 91°F
       coolTempLow: 23,  // 73°F
       coolTempHigh: 27, // 80°F
-      humidityLow: 50
+      humidityLow: 50,
+      batteryLow: 20
     };
 
     function celsiusToFahrenheit(c) {
@@ -223,11 +232,18 @@
       return h.toFixed(0) + '%';
     }
 
+    function formatBattery(b) {
+      if (b === null) return '--';
+      return b.toFixed(0) + '%';
+    }
+
     function updateDisplay() {
       document.getElementById('hot-temp').textContent = formatTemp(data.hotTemp);
       document.getElementById('hot-humidity').textContent = formatHumidity(data.hotHumidity);
+      document.getElementById('hot-battery').textContent = formatBattery(data.hotBattery);
       document.getElementById('cool-temp').textContent = formatTemp(data.coolTemp);
       document.getElementById('cool-humidity').textContent = formatHumidity(data.coolHumidity);
+      document.getElementById('cool-battery').textContent = formatBattery(data.coolBattery);
       document.getElementById('unit-toggle').textContent = useFahrenheit ? 'Switch to °C' : 'Switch to °F';
 
       // Check alerts
@@ -246,6 +262,12 @@
       if (data.coolHumidity !== null && data.coolHumidity < THRESHOLDS.humidityLow) {
         alerts.push({ msg: 'Cool side humidity is low!', danger: false });
       }
+      if (data.hotBattery !== null && data.hotBattery < THRESHOLDS.batteryLow) {
+        alerts.push({ msg: 'Hot side sensor battery low!', danger: false });
+      }
+      if (data.coolBattery !== null && data.coolBattery < THRESHOLDS.batteryLow) {
+        alerts.push({ msg: 'Cool side sensor battery low!', danger: false });
+      }
 
       const alertsDiv = document.getElementById('alerts');
       alertsDiv.innerHTML = alerts.map(a =>
@@ -256,7 +278,7 @@
     async function fetchData() {
       try {
         const response = await fetch(
-          `${BLYNK_SERVER}/get?token=${BLYNK_TOKEN}&V0&V1&V2&V3`
+          `${BLYNK_SERVER}/get?token=${BLYNK_TOKEN}&V0&V1&V2&V3&V4&V5`
         );
 
         if (!response.ok) throw new Error('API error');
@@ -267,6 +289,8 @@
         data.hotHumidity = json.V1 !== undefined ? parseFloat(json.V1) : null;
         data.coolTemp = json.V2 !== undefined ? parseFloat(json.V2) : null;
         data.coolHumidity = json.V3 !== undefined ? parseFloat(json.V3) : null;
+        data.hotBattery = json.V4 !== undefined ? parseFloat(json.V4) : null;
+        data.coolBattery = json.V5 !== undefined ? parseFloat(json.V5) : null;
 
         document.getElementById('status').textContent = 'Online';
         document.getElementById('status').className = 'status online';
