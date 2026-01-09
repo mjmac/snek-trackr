@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <title>Snek Trackr</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      color: #eee;
+      padding: 20px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .header h1 {
+      font-size: 28px;
+      margin-bottom: 4px;
+    }
+
+    .header .snake {
+      font-size: 48px;
+      margin-bottom: 8px;
+    }
+
+    .status {
+      font-size: 12px;
+      color: #888;
+    }
+
+    .status.online { color: #4ade80; }
+    .status.offline { color: #f87171; }
+
+    .cards {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      max-width: 400px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 20px;
+      backdrop-filter: blur(10px);
+    }
+
+    .card-title {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #888;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-title .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .hot .dot { background: #f87171; }
+    .cool .dot { background: #60a5fa; }
+
+    .readings {
+      display: flex;
+      justify-content: space-around;
+    }
+
+    .reading {
+      text-align: center;
+    }
+
+    .reading .value {
+      font-size: 36px;
+      font-weight: 600;
+    }
+
+    .reading .unit {
+      font-size: 14px;
+      color: #888;
+    }
+
+    .temp-toggle {
+      text-align: center;
+      margin-top: 24px;
+    }
+
+    .temp-toggle button {
+      background: rgba(255,255,255,0.1);
+      border: none;
+      color: #888;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .temp-toggle button:hover {
+      background: rgba(255,255,255,0.15);
+      color: #eee;
+    }
+
+    .warning {
+      background: rgba(251, 191, 36, 0.2);
+      border-left: 3px solid #fbbf24;
+      padding: 12px;
+      border-radius: 8px;
+      margin-top: 16px;
+      font-size: 14px;
+    }
+
+    .danger {
+      background: rgba(248, 113, 113, 0.2);
+      border-left: 3px solid #f87171;
+    }
+
+    .last-update {
+      text-align: center;
+      margin-top: 24px;
+      font-size: 12px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="snake">🐍</div>
+    <h1>Snek Trackr</h1>
+    <div class="status" id="status">Connecting...</div>
+  </div>
+
+  <div class="cards">
+    <div class="card hot">
+      <div class="card-title"><span class="dot"></span> Hot Side</div>
+      <div class="readings">
+        <div class="reading">
+          <div class="value" id="hot-temp">--</div>
+          <div class="unit">temp</div>
+        </div>
+        <div class="reading">
+          <div class="value" id="hot-humidity">--</div>
+          <div class="unit">humidity</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card cool">
+      <div class="card-title"><span class="dot"></span> Cool Side</div>
+      <div class="readings">
+        <div class="reading">
+          <div class="value" id="cool-temp">--</div>
+          <div class="unit">temp</div>
+        </div>
+        <div class="reading">
+          <div class="value" id="cool-humidity">--</div>
+          <div class="unit">humidity</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="alerts"></div>
+  </div>
+
+  <div class="temp-toggle">
+    <button id="unit-toggle">Switch to °F</button>
+  </div>
+
+  <div class="last-update">
+    Last updated: <span id="last-update">--</span>
+  </div>
+
+  <script>
+    // Blynk API config
+    const BLYNK_TOKEN = 'XXgxOP53AqgrH5wpYhdwayaVZ04_CqcJ';
+    const BLYNK_SERVER = 'https://blynk.cloud/external/api';
+
+    // State
+    let useFahrenheit = localStorage.getItem('useFahrenheit') === 'true';
+    let data = { hotTemp: null, hotHumidity: null, coolTemp: null, coolHumidity: null };
+
+    // Thresholds (in Celsius)
+    const THRESHOLDS = {
+      hotTempLow: 29,   // 84°F
+      hotTempHigh: 33,  // 91°F
+      coolTempLow: 23,  // 73°F
+      coolTempHigh: 27, // 80°F
+      humidityLow: 50
+    };
+
+    function celsiusToFahrenheit(c) {
+      return (c * 9 / 5) + 32;
+    }
+
+    function formatTemp(celsius) {
+      if (celsius === null) return '--';
+      const value = useFahrenheit ? celsiusToFahrenheit(celsius) : celsius;
+      return value.toFixed(1) + '°' + (useFahrenheit ? 'F' : 'C');
+    }
+
+    function formatHumidity(h) {
+      if (h === null) return '--';
+      return h.toFixed(0) + '%';
+    }
+
+    function updateDisplay() {
+      document.getElementById('hot-temp').textContent = formatTemp(data.hotTemp);
+      document.getElementById('hot-humidity').textContent = formatHumidity(data.hotHumidity);
+      document.getElementById('cool-temp').textContent = formatTemp(data.coolTemp);
+      document.getElementById('cool-humidity').textContent = formatHumidity(data.coolHumidity);
+      document.getElementById('unit-toggle').textContent = useFahrenheit ? 'Switch to °C' : 'Switch to °F';
+
+      // Check alerts
+      const alerts = [];
+      if (data.hotTemp !== null) {
+        if (data.hotTemp < THRESHOLDS.hotTempLow) alerts.push({ msg: 'Hot side temp is low!', danger: true });
+        if (data.hotTemp > THRESHOLDS.hotTempHigh) alerts.push({ msg: 'Hot side temp is high!', danger: true });
+      }
+      if (data.coolTemp !== null) {
+        if (data.coolTemp < THRESHOLDS.coolTempLow) alerts.push({ msg: 'Cool side temp is low!', danger: false });
+        if (data.coolTemp > THRESHOLDS.coolTempHigh) alerts.push({ msg: 'Cool side temp is high!', danger: false });
+      }
+      if (data.hotHumidity !== null && data.hotHumidity < THRESHOLDS.humidityLow) {
+        alerts.push({ msg: 'Hot side humidity is low!', danger: false });
+      }
+      if (data.coolHumidity !== null && data.coolHumidity < THRESHOLDS.humidityLow) {
+        alerts.push({ msg: 'Cool side humidity is low!', danger: false });
+      }
+
+      const alertsDiv = document.getElementById('alerts');
+      alertsDiv.innerHTML = alerts.map(a =>
+        `<div class="warning ${a.danger ? 'danger' : ''}">${a.msg}</div>`
+      ).join('');
+    }
+
+    async function fetchData() {
+      try {
+        const response = await fetch(
+          `${BLYNK_SERVER}/get?token=${BLYNK_TOKEN}&V0&V1&V2&V3`
+        );
+
+        if (!response.ok) throw new Error('API error');
+
+        const json = await response.json();
+
+        data.hotTemp = json.V0 !== undefined ? parseFloat(json.V0) : null;
+        data.hotHumidity = json.V1 !== undefined ? parseFloat(json.V1) : null;
+        data.coolTemp = json.V2 !== undefined ? parseFloat(json.V2) : null;
+        data.coolHumidity = json.V3 !== undefined ? parseFloat(json.V3) : null;
+
+        document.getElementById('status').textContent = 'Online';
+        document.getElementById('status').className = 'status online';
+        document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+
+        updateDisplay();
+      } catch (err) {
+        console.error('Fetch error:', err);
+        document.getElementById('status').textContent = 'Offline';
+        document.getElementById('status').className = 'status offline';
+      }
+    }
+
+    // Toggle temperature unit
+    document.getElementById('unit-toggle').addEventListener('click', () => {
+      useFahrenheit = !useFahrenheit;
+      localStorage.setItem('useFahrenheit', useFahrenheit);
+      updateDisplay();
+    });
+
+    // Initial fetch and poll every 30 seconds
+    fetchData();
+    setInterval(fetchData, 30000);
+
+    // Register service worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('service-worker.js');
+    }
+  </script>
+</body>
+</html>

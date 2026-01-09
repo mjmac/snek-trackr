@@ -1,0 +1,10 @@
+# PlatformIO
+.pio/
+.vscode/
+*.bak
+
+# Secrets
+src/config_local.h
+
+# macOS
+.DS_Store
