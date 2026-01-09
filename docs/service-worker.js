@@ -1,4 +1,4 @@
-const CACHE_NAME = 'snek-trackr-v3';
+const CACHE_NAME = 'snek-trackr-v4';
 const ASSETS = [
   './',
   './index.html',
