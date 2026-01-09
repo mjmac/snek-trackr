@@ -141,6 +141,42 @@
       font-size: 12px;
       color: #666;
     }
+
+    .sparkline-card {
+      margin-top: 8px;
+    }
+
+    .sparkline-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .sparkline-label {
+      font-size: 12px;
+      color: #888;
+      width: 50px;
+      flex-shrink: 0;
+    }
+
+    .sparkline-container {
+      flex: 1;
+      height: 40px;
+    }
+
+    .sparkline-container svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .sparkline-range {
+      font-size: 10px;
+      color: #666;
+      width: 60px;
+      text-align: right;
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body>
@@ -188,6 +224,20 @@
     </div>
 
     <div id="alerts"></div>
+
+    <div class="card sparkline-card">
+      <div class="card-title">24h Temperature</div>
+      <div class="sparkline-row">
+        <span class="sparkline-label" style="color: #f87171;">Hot</span>
+        <div class="sparkline-container" id="hot-sparkline"></div>
+        <span class="sparkline-range" id="hot-range">--</span>
+      </div>
+      <div class="sparkline-row">
+        <span class="sparkline-label" style="color: #60a5fa;">Cool</span>
+        <div class="sparkline-container" id="cool-sparkline"></div>
+        <span class="sparkline-range" id="cool-range">--</span>
+      </div>
+    </div>
   </div>
 
   <div class="temp-toggle">
@@ -319,6 +369,83 @@
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('service-worker.js');
     }
+
+    // Sparkline chart functions
+    function renderSparkline(containerId, dataPoints, color) {
+      const container = document.getElementById(containerId);
+      if (!dataPoints || dataPoints.length === 0) {
+        container.innerHTML = '<svg><text x="50%" y="50%" text-anchor="middle" fill="#666" font-size="12">No data</text></svg>';
+        return { min: null, max: null };
+      }
+
+      const values = dataPoints.map(d => d.value);
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const range = max - min || 1;
+
+      const width = 100;
+      const height = 100;
+      const padding = 5;
+
+      const points = dataPoints.map((d, i) => {
+        const x = padding + (i / (dataPoints.length - 1)) * (width - padding * 2);
+        const y = height - padding - ((d.value - min) / range) * (height - padding * 2);
+        return `${x},${y}`;
+      }).join(' ');
+
+      container.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+          <polyline
+            points="${points}"
+            fill="none"
+            stroke="${color}"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            vector-effect="non-scaling-stroke"
+          />
+        </svg>
+      `;
+
+      return { min, max };
+    }
+
+    function formatRange(min, max) {
+      if (min === null || max === null) return '--';
+      if (useFahrenheit) {
+        min = celsiusToFahrenheit(min);
+        max = celsiusToFahrenheit(max);
+      }
+      const unit = useFahrenheit ? 'F' : 'C';
+      return `${min.toFixed(0)}–${max.toFixed(0)}°${unit}`;
+    }
+
+    async function fetchHistory() {
+      try {
+        const [hotRes, coolRes] = await Promise.all([
+          fetch(`${BLYNK_SERVER}/data/get?token=${BLYNK_TOKEN}&period=DAY&granularityType=HOURLY&sourceType=AVG&pin=V0`),
+          fetch(`${BLYNK_SERVER}/data/get?token=${BLYNK_TOKEN}&period=DAY&granularityType=HOURLY&sourceType=AVG&pin=V2`)
+        ]);
+
+        if (hotRes.ok) {
+          const hotData = await hotRes.json();
+          const hotRange = renderSparkline('hot-sparkline', hotData, '#f87171');
+          document.getElementById('hot-range').textContent = formatRange(hotRange.min, hotRange.max);
+        }
+
+        if (coolRes.ok) {
+          const coolData = await coolRes.json();
+          const coolRange = renderSparkline('cool-sparkline', coolData, '#60a5fa');
+          document.getElementById('cool-range').textContent = formatRange(coolRange.min, coolRange.max);
+        }
+      } catch (err) {
+        console.error('History fetch error:', err);
+      }
+    }
+
+    // Fetch history on load and every 5 minutes
+    fetchHistory();
+    setInterval(fetchHistory, 300000);
   </script>
 </body>
 </html>
