@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1a1a2e">
   <title>Snek Trackr</title>
@@ -187,7 +187,11 @@
       </div>
       <div class="sparkline-container">
         <div class="sparkline-label">24h temperature</div>
-        <canvas id="hot-sparkline" class="sparkline"></canvas>
+        <canvas id="hot-temp-sparkline" class="sparkline"></canvas>
+      </div>
+      <div class="sparkline-container">
+        <div class="sparkline-label">7d humidity</div>
+        <canvas id="hot-humidity-sparkline" class="sparkline"></canvas>
       </div>
     </div>
 
@@ -209,7 +213,11 @@
       </div>
       <div class="sparkline-container">
         <div class="sparkline-label">24h temperature</div>
-        <canvas id="cool-sparkline" class="sparkline"></canvas>
+        <canvas id="cool-temp-sparkline" class="sparkline"></canvas>
+      </div>
+      <div class="sparkline-container">
+        <div class="sparkline-label">7d humidity</div>
+        <canvas id="cool-humidity-sparkline" class="sparkline"></canvas>
       </div>
     </div>
 
@@ -238,7 +246,8 @@
     // State
     let useFahrenheit = localStorage.getItem('useFahrenheit') === 'true';
     let data = { hotTemp: null, hotHumidity: null, hotBattery: null, coolTemp: null, coolHumidity: null, coolBattery: null };
-    let historyData = { hot: [], cool: [] };
+    let tempHistory = { hot: [], cool: [] };
+    let humidityHistory = { hot: [], cool: [] };
 
     // Thresholds (in Celsius)
     const THRESHOLDS = {
@@ -338,68 +347,75 @@
     }
 
     // Fetch historical data from InfluxDB
-    async function fetchHistory() {
+    async function fetchInfluxData(field, range, aggregate) {
       const query = `
         from(bucket: "${INFLUX_BUCKET}")
-          |> range(start: -24h)
-          |> filter(fn: (r) => r._measurement == "enclosure" and r._field == "temperature")
-          |> aggregateWindow(every: 15m, fn: mean, createEmpty: false)
+          |> range(start: ${range})
+          |> filter(fn: (r) => r._measurement == "enclosure" and r._field == "${field}")
+          |> aggregateWindow(every: ${aggregate}, fn: mean, createEmpty: false)
           |> yield(name: "mean")
       `;
 
+      const response = await fetch(
+        `${INFLUX_URL}/api/v2/query?org=${INFLUX_ORG}`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Token ${INFLUX_TOKEN}`,
+            'Content-Type': 'application/vnd.flux',
+            'Accept': 'application/csv'
+          },
+          body: query
+        }
+      );
+
+      if (!response.ok) throw new Error(`InfluxDB query failed: ${response.status}`);
+
+      const csv = await response.text();
+      if (!csv.trim()) return { hot: [], cool: [] };
+
+      const result = { hot: [], cool: [] };
+      for (const line of csv.trim().split('\n')) {
+        if (line.startsWith('#') || line.startsWith(',result')) continue;
+        const cols = line.split(',');
+        if (cols.length < 10) continue;
+
+        const value = parseFloat(cols[6]);
+        const side = cols[9].trim();
+
+        if (isNaN(value)) continue;
+
+        if (side === 'hot') {
+          result.hot.push(value);
+        } else if (side === 'cool') {
+          result.cool.push(value);
+        }
+      }
+      return result;
+    }
+
+    async function fetchTempHistory() {
       try {
-        const response = await fetch(
-          `${INFLUX_URL}/api/v2/query?org=${INFLUX_ORG}`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Token ${INFLUX_TOKEN}`,
-              'Content-Type': 'application/vnd.flux',
-              'Accept': 'application/csv'
-            },
-            body: query
-          }
-        );
-
-        if (!response.ok) {
-          console.error('InfluxDB query failed:', response.status);
-          return;
-        }
-
-        const csv = await response.text();
-        if (!csv.trim()) return;
-
-        const lines = csv.trim().split('\n');
-
-        historyData.hot = [];
-        historyData.cool = [];
-
-        for (const line of lines) {
-          if (line.startsWith('#') || line.startsWith(',result')) continue;
-          const cols = line.split(',');
-          if (cols.length < 10) continue;
-
-          const value = parseFloat(cols[6]);
-          const side = cols[9].trim();
-
-          if (isNaN(value)) continue;
-
-          if (side === 'hot') {
-            historyData.hot.push(value);
-          } else if (side === 'cool') {
-            historyData.cool.push(value);
-          }
-        }
-
-        drawSparkline('hot-sparkline', historyData.hot, '#f87171');
-        drawSparkline('cool-sparkline', historyData.cool, '#60a5fa');
+        tempHistory = await fetchInfluxData('temperature', '-24h', '15m');
+        drawSparkline('hot-temp-sparkline', tempHistory.hot, '#f87171', true);
+        drawSparkline('cool-temp-sparkline', tempHistory.cool, '#60a5fa', true);
       } catch (err) {
-        console.error('History fetch error:', err);
+        console.error('Temp history fetch error:', err);
+      }
+    }
+
+    async function fetchHumidityHistory() {
+      try {
+        humidityHistory = await fetchInfluxData('humidity', '-7d', '2h');
+        drawSparkline('hot-humidity-sparkline', humidityHistory.hot, '#f87171', false);
+        drawSparkline('cool-humidity-sparkline', humidityHistory.cool, '#60a5fa', false);
+      } catch (err) {
+        console.error('Humidity history fetch error:', err);
       }
     }
 
     // Draw sparkline on canvas
-    function drawSparkline(canvasId, values, color) {
+    function drawSparkline(canvasId, values, color, isTemperature) {
       const canvas = document.getElementById(canvasId);
       if (!canvas || values.length < 2) return;
 
@@ -416,8 +432,9 @@
       const height = rect.height;
       const padding = 2;
 
-      // Convert to display units if needed
-      const displayValues = useFahrenheit ? values.map(celsiusToFahrenheit) : values;
+      // Convert to display units if temperature
+      const displayValues = (isTemperature && useFahrenheit) ? values.map(celsiusToFahrenheit) : values;
+      const suffix = isTemperature ? '°' : '%';
 
       const min = Math.min(...displayValues);
       const max = Math.max(...displayValues);
@@ -446,8 +463,8 @@
       ctx.fillStyle = '#666';
       ctx.font = '9px sans-serif';
       ctx.textAlign = 'right';
-      ctx.fillText(max.toFixed(1) + '°', width - 2, 10);
-      ctx.fillText(min.toFixed(1) + '°', width - 2, height - 2);
+      ctx.fillText(max.toFixed(isTemperature ? 1 : 0) + suffix, width - 2, 10);
+      ctx.fillText(min.toFixed(isTemperature ? 1 : 0) + suffix, width - 2, height - 2);
     }
 
     // Toggle temperature unit
@@ -455,18 +472,22 @@
       useFahrenheit = !useFahrenheit;
       localStorage.setItem('useFahrenheit', useFahrenheit);
       updateDisplay();
-      // Redraw sparklines with new unit
-      drawSparkline('hot-sparkline', historyData.hot, '#f87171');
-      drawSparkline('cool-sparkline', historyData.cool, '#60a5fa');
+      // Redraw temperature sparklines with new unit
+      drawSparkline('hot-temp-sparkline', tempHistory.hot, '#f87171', true);
+      drawSparkline('cool-temp-sparkline', tempHistory.cool, '#60a5fa', true);
     });
 
     // Initial fetch and poll every 30 seconds
     fetchData();
     setInterval(fetchData, 30000);
 
-    // Fetch history on load and every 5 minutes
-    fetchHistory();
-    setInterval(fetchHistory, 300000);
+    // Fetch temperature history on load and every 5 minutes
+    fetchTempHistory();
+    setInterval(fetchTempHistory, 300000);
+
+    // Fetch humidity history on load and every 30 minutes
+    fetchHumidityHistory();
+    setInterval(fetchHumidityHistory, 1800000);
 
     // Register service worker
     if ('serviceWorker' in navigator) {
