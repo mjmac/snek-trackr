@@ -1,4 +1,4 @@
-const CACHE_NAME = 'snek-trackr-v4';
+const CACHE_NAME = 'snek-trackr-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -13,7 +13,7 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('fetch', (event) => {
   // For API requests, always go to network
-  if (event.request.url.includes('blynk.cloud')) {
+  if (event.request.url.includes('blynk.cloud') || event.request.url.includes('influxdata.com')) {
     event.respondWith(fetch(event.request));
     return;
   }

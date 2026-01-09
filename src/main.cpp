@@ -10,6 +10,7 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <WiFi.h>
+#include <HTTPClient.h>
 
 // Config must be before BlynkSimpleEsp32.h include
 #if __has_include("config_local.h")
@@ -177,6 +178,61 @@ void pushToBlynk() {
   }
 }
 
+void pushToInfluxDB() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected, skipping InfluxDB push");
+    return;
+  }
+
+  // Build line protocol data
+  // Format: measurement,tag=value field=value timestamp
+  String lineData = "";
+
+  if (hotSide.valid) {
+    lineData += "enclosure,side=hot temperature=";
+    lineData += String(hotSide.temperature, 2);
+    lineData += ",humidity=";
+    lineData += String(hotSide.humidity, 2);
+    lineData += ",battery=";
+    lineData += String(hotSide.battery);
+    lineData += "i\n";
+  }
+
+  if (coolSide.valid) {
+    lineData += "enclosure,side=cool temperature=";
+    lineData += String(coolSide.temperature, 2);
+    lineData += ",humidity=";
+    lineData += String(coolSide.humidity, 2);
+    lineData += ",battery=";
+    lineData += String(coolSide.battery);
+    lineData += "i\n";
+  }
+
+  if (lineData.length() == 0) {
+    return;
+  }
+
+  HTTPClient http;
+  String url = String(INFLUXDB_URL) + "/api/v2/write?org=" + INFLUXDB_ORG + "&bucket=" + INFLUXDB_BUCKET + "&precision=s";
+
+  http.begin(url);
+  http.addHeader("Authorization", String("Token ") + INFLUXDB_TOKEN);
+  http.addHeader("Content-Type", "text/plain");
+
+  int httpCode = http.POST(lineData);
+
+  if (httpCode == 204) {
+    Serial.println("InfluxDB push successful");
+  } else {
+    Serial.printf("InfluxDB push failed: %d\n", httpCode);
+    if (httpCode > 0) {
+      Serial.println(http.getString());
+    }
+  }
+
+  http.end();
+}
+
 // =============================================================================
 // SETUP & LOOP
 // =============================================================================
@@ -228,12 +284,14 @@ void loop() {
   if (!initialPushDone && hotSide.valid && coolSide.valid) {
     Serial.println("Initial data received, pushing immediately...");
     pushToBlynk();
+    pushToInfluxDB();
     lastBlynkPush = now;
     initialPushDone = true;
   }
   // Then push on regular interval
   else if (now - lastBlynkPush >= BLYNK_PUSH_INTERVAL_MS) {
     pushToBlynk();
+    pushToInfluxDB();
     lastBlynkPush = now;
   }
 

@@ -11,3 +11,9 @@
 // Govee MAC addresses
 #define GOVEE_HOT_SIDE_MAC "aa:bb:cc:dd:ee:ff"
 #define GOVEE_COOL_SIDE_MAC "11:22:33:44:55:66"
+
+// InfluxDB Cloud (for historical data)
+#define INFLUXDB_URL "https://us-east-1-1.aws.cloud2.influxdata.com"
+#define INFLUXDB_ORG "your_org_id"
+#define INFLUXDB_BUCKET "your_bucket_name"
+#define INFLUXDB_TOKEN "your_write_token"

@@ -142,6 +142,23 @@
       color: #666;
     }
 
+    .sparkline-container {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .sparkline-label {
+      font-size: 11px;
+      color: #666;
+      margin-bottom: 4px;
+    }
+
+    .sparkline {
+      width: 100%;
+      height: 40px;
+    }
+
   </style>
 </head>
 <body>
@@ -168,6 +185,10 @@
           <div class="unit">battery</div>
         </div>
       </div>
+      <div class="sparkline-container">
+        <div class="sparkline-label">24h temperature</div>
+        <canvas id="hot-sparkline" class="sparkline"></canvas>
+      </div>
     </div>
 
     <div class="card cool">
@@ -185,6 +206,10 @@
           <div class="value" id="cool-battery">--</div>
           <div class="unit">battery</div>
         </div>
+      </div>
+      <div class="sparkline-container">
+        <div class="sparkline-label">24h temperature</div>
+        <canvas id="cool-sparkline" class="sparkline"></canvas>
       </div>
     </div>
 
@@ -204,9 +229,16 @@
     const BLYNK_TOKEN = 'XXgxOP53AqgrH5wpYhdwayaVZ04_CqcJ';
     const BLYNK_SERVER = 'https://blynk.cloud/external/api';
 
+    // InfluxDB config (for historical data)
+    const INFLUX_URL = 'https://us-east-1-1.aws.cloud2.influxdata.com';
+    const INFLUX_ORG = 'cdb7031cf1744bb1';
+    const INFLUX_BUCKET = 'snek-tracker';
+    const INFLUX_TOKEN = 'nwCKoTY_p29plhj4uumyUmvYnZpP4SaGo0YnHv_e0oRh-fArkBBLEVHJNmyyIlsh07ibEvgyaXFYOLp9wHabng==';
+
     // State
     let useFahrenheit = localStorage.getItem('useFahrenheit') === 'true';
     let data = { hotTemp: null, hotHumidity: null, hotBattery: null, coolTemp: null, coolHumidity: null, coolBattery: null };
+    let historyData = { hot: [], cool: [] };
 
     // Thresholds (in Celsius)
     const THRESHOLDS = {
@@ -305,16 +337,134 @@
       }
     }
 
+    // Fetch historical data from InfluxDB
+    async function fetchHistory() {
+      const query = `
+        from(bucket: "${INFLUX_BUCKET}")
+          |> range(start: -24h)
+          |> filter(fn: (r) => r._measurement == "enclosure" and r._field == "temperature")
+          |> aggregateWindow(every: 15m, fn: mean, createEmpty: false)
+          |> yield(name: "mean")
+      `;
+
+      try {
+        const response = await fetch(
+          `${INFLUX_URL}/api/v2/query?org=${INFLUX_ORG}`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Token ${INFLUX_TOKEN}`,
+              'Content-Type': 'application/vnd.flux',
+              'Accept': 'application/csv'
+            },
+            body: query
+          }
+        );
+
+        if (!response.ok) {
+          console.error('InfluxDB query failed:', response.status);
+          return;
+        }
+
+        const csv = await response.text();
+        const lines = csv.trim().split('\n');
+
+        historyData.hot = [];
+        historyData.cool = [];
+
+        for (const line of lines) {
+          if (line.startsWith('#') || line.startsWith(',result')) continue;
+          const cols = line.split(',');
+          if (cols.length < 7) continue;
+
+          const value = parseFloat(cols[6]);
+          const side = cols[9];
+
+          if (isNaN(value)) continue;
+
+          if (side === 'hot') {
+            historyData.hot.push(value);
+          } else if (side === 'cool') {
+            historyData.cool.push(value);
+          }
+        }
+
+        drawSparkline('hot-sparkline', historyData.hot, '#f87171');
+        drawSparkline('cool-sparkline', historyData.cool, '#60a5fa');
+      } catch (err) {
+        console.error('History fetch error:', err);
+      }
+    }
+
+    // Draw sparkline on canvas
+    function drawSparkline(canvasId, values, color) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas || values.length < 2) return;
+
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+
+      // Set canvas size accounting for device pixel ratio
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+
+      const width = rect.width;
+      const height = rect.height;
+      const padding = 2;
+
+      // Convert to display units if needed
+      const displayValues = useFahrenheit ? values.map(celsiusToFahrenheit) : values;
+
+      const min = Math.min(...displayValues);
+      const max = Math.max(...displayValues);
+      const range = max - min || 1;
+
+      ctx.clearRect(0, 0, width, height);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+
+      ctx.beginPath();
+      for (let i = 0; i < displayValues.length; i++) {
+        const x = (i / (displayValues.length - 1)) * (width - padding * 2) + padding;
+        const y = height - padding - ((displayValues[i] - min) / range) * (height - padding * 2);
+
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+
+      // Draw min/max labels
+      ctx.fillStyle = '#666';
+      ctx.font = '9px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(max.toFixed(1) + '°', width - 2, 10);
+      ctx.fillText(min.toFixed(1) + '°', width - 2, height - 2);
+    }
+
     // Toggle temperature unit
     document.getElementById('unit-toggle').addEventListener('click', () => {
       useFahrenheit = !useFahrenheit;
       localStorage.setItem('useFahrenheit', useFahrenheit);
       updateDisplay();
+      // Redraw sparklines with new unit
+      drawSparkline('hot-sparkline', historyData.hot, '#f87171');
+      drawSparkline('cool-sparkline', historyData.cool, '#60a5fa');
     });
 
     // Initial fetch and poll every 30 seconds
     fetchData();
     setInterval(fetchData, 30000);
+
+    // Fetch history on load and every 5 minutes
+    fetchHistory();
+    setInterval(fetchHistory, 300000);
 
     // Register service worker
     if ('serviceWorker' in navigator) {
