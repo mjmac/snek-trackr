@@ -1,8 +1,8 @@
-const CACHE_NAME = 'snek-trackr-v1';
+const CACHE_NAME = 'snek-trackr-v2';
 const ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json'
+  './',
+  './index.html',
+  './manifest.json'
 ];
 
 self.addEventListener('install', (event) => {
