@@ -336,7 +336,11 @@
 
         document.getElementById('status').textContent = 'Online';
         document.getElementById('status').className = 'status online';
-        document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+        document.getElementById('last-update').textContent = new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: useFahrenheit
+        });
 
         updateDisplay();
       } catch (err) {
